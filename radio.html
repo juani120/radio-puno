@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Radio Puno (10 emisoras)</title>
+  <style>
+    body{font-family:system-ui,Arial;margin:0;background:#0b2239;color:#fff}
+    header{padding:14px 14px 10px;background:#0a1b2d;position:sticky;top:0}
+    h1{font-size:18px;margin:0 0 8px}
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    input,button,select{font-size:16px;padding:10px;border-radius:10px;border:0}
+    input{flex:1;min-width:220px}
+    button{background:#1f7ae0;color:#fff;font-weight:600}
+    button:active{transform:scale(0.99)}
+    main{padding:14px}
+    .card{background:#102a44;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:12px;margin-bottom:10px}
+    .name{font-weight:700}
+    .meta{opacity:.85;font-size:13px;margin-top:3px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .small{background:#174d8f}
+    .danger{background:#b33636}
+    .now{background:#0f355c;padding:12px;border-top:1px solid rgba(255,255,255,.08);position:sticky;bottom:0}
+    .status{opacity:.9;font-size:13px;margin-top:6px}
+    a{color:#8ec7ff}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📻 Radio Puno / Juliaca (top 10)</h1>
+    <div class="row">
+      <input id="q" placeholder="Buscar emisora (ej: RPP, Exitosa, Yaraví, Onda Azul)"/>
+      <button id="btnSearch">Buscar</button>
+      <button id="btnLocal" class="small">Puno/Juliaca</button>
+    </div>
+    <div class="status" id="hint">
+      Tip: si una emisora no suena, prueba otra (algunas cambian su link).
+    </div>
+  </header>
+
+  <main>
+    <div id="list"></div>
+  </main>
+
+  <div class="now">
+    <div><b>Reproductor:</b> <span id="nowName">—</span></div>
+    <audio id="player" controls style="width:100%;margin-top:10px"></audio>
+    <div class="status" id="status">Listo.</div>
+    <div class="status">
+      Fuente de emisoras: Radio Browser API. :contentReference[oaicite:1]{index=1}
+    </div>
+  </div>
+
+<script>
+  // Radio Browser recomienda elegir un servidor disponible.
+  // Para simplificar, usamos uno común. Si falla, cambia a otro (fi1, de2, nl1, etc.).
+  const BASE = "https://de1.api.radio-browser.info";
+
+  const elList = document.getElementById("list");
+  const elQ = document.getElementById("q");
+  const btnSearch = document.getElementById("btnSearch");
+  const btnLocal = document.getElementById("btnLocal");
+  const player = document.getElementById("player");
+  const nowName = document.getElementById("nowName");
+  const status = document.getElementById("status");
+
+  function setStatus(msg){ status.textContent = msg; }
+
+  function cleanUrl(url){
+    // Algunos links vienen con espacios o caracteres raros
+    return (url || "").trim();
+  }
+
+  async function fetchStations(params){
+    const url = new URL(BASE + "/json/stations/search");
+    Object.entries(params).forEach(([k,v]) => url.searchParams.set(k, v));
+    // Orden: más clics primero. Límite: pedimos 30 y luego recortamos a 10.
+    url.searchParams.set("order", "clickcount");
+    url.searchParams.set("reverse", "true");
+    url.searchParams.set("limit", "30");
+
+    const r = await fetch(url.toString(), {
+      headers: { "User-Agent": "RadioPunoDemo/1.0 (web)" }
+    });
+    if(!r.ok) throw new Error("Error al buscar emisoras");
+    return r.json();
+  }
+
+  function render(stations){
+    elList.innerHTML = "";
+    const top = stations
+      .filter(s => s.url_resolved || s.url)
+      .slice(0, 10);
+
+    if(top.length === 0){
+      elList.innerHTML = `<div class="card">No encontré emisoras con ese filtro. Prueba otro nombre.</div>`;
+      return;
+    }
+
+    top.forEach((s, idx) => {
+      const url = cleanUrl(s.url_resolved || s.url);
+      const name = s.name || "Emisora";
+      const city = s.city || "";
+      const state = s.state || "";
+      const country = s.country || "";
+      const codec = s.codec ? `${s.codec} • ${Math.round((s.bitrate||0))}kbps` : "";
+
+      const div = document.createElement("div");
+      div.className = "card";
+      div.innerHTML = `
+        <div class="name">${idx+1}. ${escapeHtml(name)}</div>
+        <div class="meta">${escapeHtml([city,state,country].filter(Boolean).join(" • "))}</div>
+        <div class="meta">${escapeHtml(codec)}</div>
+        <div class="actions">
+          <button class="small" data-play="1">▶ Reproducir</button>
+          <button class="danger" data-stop="1">■ Parar</button>
+          <a href="${url}" target="_blank" rel="noopener">Abrir stream</a>
+        </div>
+      `;
+
+      div.querySelector("[data-play]").addEventListener("click", () => playStation(name, url));
+      div.querySelector("[data-stop]").addEventListener("click", stop);
+
+      elList.appendChild(div);
+    });
+  }
+
+  function stop(){
+    player.pause();
+    player.removeAttribute("src");
+    player.load();
+    nowName.textContent = "—";
+    setStatus("Detenido.");
+  }
+
+  async function playStation(name, url){
+    try{
+      nowName.textContent = name;
+      setStatus("Cargando…");
+      player.src = url;
+      player.load();
+      await player.play();
+      setStatus("Reproduciendo.");
+    }catch(e){
+      setStatus("No se pudo reproducir. Prueba otra emisora (o abre el stream).");
+      console.error(e);
+    }
+  }
+
+  function escapeHtml(str){
+    return String(str||"").replace(/[&<>"']/g, (m)=>({
+      "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+    }[m]));
+  }
+
+  async function searchByText(){
+    const q = elQ.value.trim();
+    if(!q){
+      setStatus("Escribe un nombre para buscar.");
+      return;
+    }
+    setStatus("Buscando…");
+    const stations = await fetchStations({ name: q, countrycode: "PE" });
+    render(stations);
+    setStatus("Listo.");
+  }
+
+  async function loadPunoJuliaca(){
+    setStatus("Buscando Puno/Juliaca…");
+    // Intento 1: por estado (a veces está vacío en la base, por eso hacemos 2 intentos)
+    let stations = await fetchStations({ countrycode: "PE", state: "Puno" });
+    // Si salen pocas, intentamos por texto (Juliaca/Puno)
+    if(!stations || stations.length < 10){
+      const a = await fetchStations({ countrycode: "PE", name: "Juliaca" });
+      const b = await fetchStations({ countrycode: "PE", name: "Puno" });
+      stations = [...a, ...b];
+      // quitar duplicados por stationuuid
+      const map = new Map();
+      stations.forEach(s => map.set(s.stationuuid, s));
+      stations = [...map.values()];
+    }
+    render(stations);
+    setStatus("Listo.");
+  }
+
+  btnSearch.addEventListener("click", () => searchByText().catch(err => setStatus("Error al buscar.")));
+  btnLocal.addEventListener("click", () => loadPunoJuliaca().catch(err => setStatus("Error al cargar Puno/Juliaca.")));
+  elQ.addEventListener("keydown", (e)=>{ if(e.key==="Enter") btnSearch.click(); });
+
+  // Carga inicial: Puno/Juliaca
+  loadPunoJuliaca().catch(()=>setStatus("Error al cargar."));
+</script>
+</body>
+</html>
